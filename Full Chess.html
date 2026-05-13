@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Chessboard Game </title>
+  <style>
+    :root{--tile-size:64px}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:24px;display:flex;flex-direction:column;gap:12px;align-items:center}
+    h1{margin:0 0 6px;font-size:18px}
+    #board{display:grid;grid-template-columns:repeat(8, var(--tile-size));grid-template-rows:repeat(8,var(--tile-size));box-shadow:0 6px 18px rgba(0,0,0,0.12);}
+    .cell{width:var(--tile-size);height:var(--tile-size);display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;font-size:30px}
+    .cell.light{background:#f0d9b5}
+    .cell.dark{background:#b58863}
+    .cell.selected{outline:3px solid #00aaff;outline-offset:-3px}
+    .cell.highlight{box-shadow:inset 0 0 0 3px rgba(255,255,0,0.18)}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{padding:6px 10px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .status{min-width:220px}
+  </style>
+</head>
+<body>
+  <h1>Chessboard — <code>createBoard</code> Game</h1>
+  <div class="controls">
+    <button id="newGame">New Game</button>
+    <button id="flip">Flip Board</button>
+    <div class="status" id="status">Turn: White</div>
+  </div>
+  <div id="board" aria-label="Chess board"></div>
+
+  <script>
+    // Simple chess implementation (educational)
+    // Features:
+    // - createBoard() builds board and places pieces
+    // - click a piece to select, click a target to move
+    // - basic movement rules for each piece type (no castling/en-passant/full checkmate detection)
+    // - captures, pawn promotion to Queen implemented
+    // - turn tracking
+
+    // Unicode chess pieces
+    const PIECES = {
+      r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟',
+      R: '♖', N: '♘', B: '♗', Q: '♕', K: '♔', P: '♙'
+    };
+
+    // Board state: 8x8 array with piece characters or null
+    let boardState = null;
+    let selected = null; // {r,c}
+    let whiteToMove = true;
+    let flipped = false;
+
+    // Create and render board; call this to (re)initialize
+    function createBoard() {
+      // Standard initial position (FEN-like layout)
+      const initial = [
+        ['r','n','b','q','k','b','n','r'],
+        ['p','p','p','p','p','p','p','p'],
+        [null,null,null,null,null,null,null,null],
+        [null,null,null,null,null,null,null,null],
+        [null,null,null,null,null,null,null,null],
+        [null,null,null,null,null,null,null,null],
+        ['P','P','P','P','P','P','P','P'],
+        ['R','N','B','Q','K','B','N','R']
+      ];
+      boardState = initial.map(row => row.slice());
+      whiteToMove = true;
+      selected = null;
+      renderBoard();
+      updateStatus();
+    }
+
+    function renderBoard() {
+      const boardEl = document.getElementById('board');
+      boardEl.innerHTML = '';
+
+      // Build 8x8 cells. We render top row first (rank 8) so visuals match classic orientation
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'cell ' + (((r + c) % 2) ? 'dark' : 'light');
+          // Map coordinates to display depending on flip
+          const dispR = flipped ? 7 - r : r;
+          const dispC = flipped ? 7 - c : c;
+          cell.dataset.r = dispR;
+          cell.dataset.c = dispC;
+
+          const piece = boardState[dispR][dispC];
+          if (piece) cell.textContent = PIECES[piece] || '';
+
+          cell.addEventListener('click', onCellClick);
+          boardEl.appendChild(cell);
+        }
+      }
+      highlightSelection();
+    }
+
+    function onCellClick(e) {
+      const r = parseInt(e.currentTarget.dataset.r, 10);
+      const c = parseInt(e.currentTarget.dataset.c, 10);
+      const piece = boardState[r][c];
+
+      if (selected) {
+        // If clicked ame square — deselect
+        if (selected.r === r && selected.c === c) {
+          selected = null;
+          highlightSelection();
+          return;
+        }
+
+        // Attempt move
+        const from = {r: selected.r, c: selected.c};
+        const to = {r, c};
+        if (tryMove(from, to)) {
+          selected = null;
+          renderBoard();
+          updateStatus();
+        } else {
+          // If click another friendly piece, switch selection
+          if (piece && isWhitePiece(piece) === whiteToMove) {
+            selected = {r, c};
+            highlightSelection();
+          }
+        }
+      } else {
+        // No selection yet — select if piece belongs to the side to move
+        if (piece && isWhitePiece(piece) === whiteToMove) {
+          selected = {r, c};
+          highlightSelection();
+        }
+      }
+    }
+
+    function highlightSelection() {
+      document.querySelectorAll('.cell').forEach(el => {
+        el.classList.remove('selected', 'highlight');
+      });
+      if (!selected) return;
+      const cells = document.querySelectorAll('.cell');
+      cells.forEach(el => {
+        const r = parseInt(el.dataset.r, 10);
+        const c = parseInt(el.dataset.c, 10);
+        if (r === selected.r && c === selected.c) el.classList.add('selected');
+        else if (canMove(selected, {r,c})) el.classList.add('highlight');
+      });
+    }
+
+    // Attempt a move; returns true if move done
+    function tryMove(from, to) {
+      const piece = boardState[from.r][from.c];
+      if (!piece) return false;
+      if (isWhitePiece(piece) !== whiteToMove) return false;
+      if (!canMove(from, to)) return false;
+
+      // Make move
+      boardState[to.r][to.c] = piece;
+      boardState[from.r][from.c] = null;
+
+      // Pawn promotion (simple: promote to queen)
+      if ((piece === 'P' && to.r === 0) || (piece === 'p' && to.r === 7)) {
+        boardState[to.r][to.c] = (piece === 'P') ? 'Q' : 'q';
+      }
+
+      whiteToMove = !whiteToMove;
+      return true;
+    }
+
+    // Returns true if piece at 'from' can legally move to 'to' (basic rules)
+    function canMove(from, to) {
+      if (from.r === to.r && from.c === to.c) return false;
+      const piece = boardState[from.r][from.c];
+      if (!piece) return false;
+      const target = boardState[to.r][to.c];
+      if (target && isWhitePiece(target) === isWhitePiece(piece)) return false; // no capture of own piece
+
+      const dr = to.r - from.r;
+      const dc = to.c - from.c;
+      const absdr = Math.abs(dr);
+      const absdc = Math.abs(dc);
+
+      const p = piece.toLowerCase();
+      const isWhite = isWhitePiece(piece);
+
+      if (p === 'p') {
+        // Pawn moves
+        const dir = isWhite ? -1 : 1; // white pawns go up (decreasing r)
+        // single step
+        if (dc === 0 && dr === dir && !target) return true;
+        // double step from starting rank
+        const startRank = isWhite ? 6 : 1;
+        if (dc === 0 && dr === dir*2 && from.r === startRank && !target && !boardState[from.r + dir][from.c]) return true;
+        // capture diagonally
+        if (absdc === 1 && dr === dir && target && isWhitePiece(target) !== isWhite) return true;
+        return false;
+      }
+
+      if (p === 'n') {
+        // Knight
+        if ((absdr === 2 && absdc === 1) || (absdr === 1 && absdc === 2)) return true;
+        return false;
+      }
+
+      if (p === 'b' || p === 'r' || p === 'q') {
+        // Bishop, Rook, Queen — check line and blocking pieces
+        if (p === 'b' && absdr === absdc && absdr > 0) {
+          return isPathClear(from, to);
+        }
+        if (p === 'r' && (dr === 0 || dc === 0) && (absdr + absdc > 0)) {
+          return isPathClear(from, to);
+        }
+        if (p === 'q' && (absdr === absdc || dr === 0 || dc === 0) && (absdr + absdc > 0)) {
+          return isPathClear(from, to);
+        }
+        return false;
+      }
+
+      if (p === 'k') {
+        // King — one square any dir. (no castling)
+        if (Math.max(absdr, absdc) === 1) return true;
+        return false;
+      }
+
+      return false;
+    }
+
+    function isPathClear(from, to) {
+      const dr = Math.sign(to.r - from.r);
+      const dc = Math.sign(to.c - from.c);
+      let r = from.r + dr;
+      let c = from.c + dc;
+      while (r !== to.r || c !== to.c) {
+        if (boardState[r][c]) return false;
+        r += dr; c += dc;
+      }
+      return true;
+    }
+
+    function isWhitePiece(ch) {
+      if (!ch) return null;
+      return ch === ch.toUpperCase();
+    }
+
+    // UI helpers
+    function updateStatus() {
+      document.getElementById('status').textContent = `Turn: ${whiteToMove ? 'White' : 'Black'}`;
+      highlightSelection();
+    }
+
+    // Flip board orientation
+    document.getElementById('flip').addEventListener('click', () => { flipped = !flipped; renderBoard(); });
+    document.getElementById('newGame').addEventListener('click', createBoard);
+
+    // initialize
+    createBoard();
+
+    // Expose simple functions to console for testing
+    window.createBoard = createBoard;
+    window.boardState = boardState;
+    window.tryMove = tryMove;
+    window.canMove = canMove;
+  </script>
+</body>
+</html>
